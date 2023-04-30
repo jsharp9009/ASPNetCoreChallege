@@ -1,4 +1,5 @@
-﻿using ASPNetCoreChallenge.Models;
+﻿using System.Diagnostics;
+using ASPNetCoreChallenge.Models;
 using Microsoft.Extensions.Caching.Memory;
 using RestSharp;
 
@@ -11,49 +12,56 @@ namespace ASPNetCoreChallenge.Modules
 
     public class RedirectByAPI : IRedirectByAPI
     {
+        private string baseUrl = "";
+        private string apiPath = "";
+        private double cacheTimeout = 2.0;
         private readonly IMemoryCache _cache;
+        private readonly ILogger _logger;
 
-        public RedirectByAPI(IMemoryCache cache)
+        public RedirectByAPI(IMemoryCache cache, ILogger<RedirectByAPI> logger)
         {
             _cache = cache;
+            _logger = logger;
         }
-               
 
         public void Attach(WebApplication app)
         {
-            app.Use(AttachRouting);
+            app.Use(RoutByAPI);
+            LoadOptions();
             StartCachingRefreshService();
         }
 
-        async Task AttachRouting(HttpContext context, RequestDelegate next)
-        {            
-            var path = context.Request.Path.ToString();
-            IEnumerable<RedirectRule> redirectRules = null;
+        async Task RoutByAPI(HttpContext context, RequestDelegate next)
+        {
             bool redirect = false;
-            if (_cache.TryGetValue("_apiRedirectCache", out redirectRules))
+            var uriBuilder = GetUri(context.Request);
+
+            if (_cache.TryGetValue("_apiRedirectCache", out IEnumerable<RedirectRule> redirectRules))
             {
+                if (redirectRules == null || redirectRules.Count() < 0) return;
                 foreach (var rule in redirectRules)
                 {
                     if (rule.useRelative)
                     {
-                        if (path.Contains(rule.redirectUrl, StringComparison.InvariantCultureIgnoreCase))
+                        if (uriBuilder.Path.Contains(rule.redirectUrl, StringComparison.InvariantCultureIgnoreCase))
                         {
-                            path.Replace(rule.redirectUrl, rule.targetUrl, StringComparison.InvariantCultureIgnoreCase);
-                            context.Response.Redirect(path, rule.redirectType == 301);
+                            uriBuilder.Path = uriBuilder.Path.Replace(rule.redirectUrl, rule.targetUrl, StringComparison.InvariantCultureIgnoreCase);
+                            context.Response.Redirect(uriBuilder.Uri.AbsoluteUri, rule.redirectType == 301);
                             redirect = true;
                         }
                     }
                     else
                     {
-                        if (path.Equals(rule.redirectUrl, StringComparison.InvariantCultureIgnoreCase))
+                        if (uriBuilder.Path.Equals(rule.redirectUrl, StringComparison.InvariantCultureIgnoreCase))
                         {
-                            context.Response.Redirect(rule.redirectUrl, rule.redirectType == 301);
+                            uriBuilder.Path = rule.targetUrl;
+                            context.Response.Redirect(uriBuilder.Uri.AbsolutePath, rule.permanent);
                             redirect = true;
                         }
                     }
                 }
             }
-            if(!redirect)
+            if (!redirect)
                 await next(context);
         }
 
@@ -62,8 +70,8 @@ namespace ASPNetCoreChallenge.Modules
             RefreshCache();
             var timer = new System.Timers.Timer();
             timer.Elapsed += Timer_Elapsed;
-            timer.Interval = 2 * 60000;
-            timer.AutoReset= true; 
+            timer.Interval = cacheTimeout * 60000;
+            timer.AutoReset = true;
             timer.Start();
         }
 
@@ -76,11 +84,40 @@ namespace ASPNetCoreChallenge.Modules
         {
             try
             {
-                RestClient client = new RestClient("https://localhost:7140/");
-                var redirects = client.Get<RedirectRule[]>(new RestRequest("api/redirects"));
+                var options = new RestClientOptions(baseUrl)
+                {
+                    RemoteCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true
+                };
+                RestClient client = new RestClient(options);
+                var redirects = client.Get<RedirectRule[]>(new RestRequest(apiPath));
                 _cache.Set("_apiRedirectCache", redirects);
+                _logger.LogInformation("Redirect cache refreshed successfully");
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _logger.LogError(101, ex, $"Unable to reach api at {baseUrl + apiPath}");
+            }
+        }
+
+        void LoadOptions()
+        {
+            var config = new ConfigurationBuilder().AddJsonFile("appsettings.json").Build();
+            baseUrl = config.GetValue<string>("AppSettings:RedirectByAPI.baseUrl");
+            apiPath = config.GetValue<string>("AppSettings:RedirectByAPI.apiPath");
+            cacheTimeout = config.GetValue<double>("AppSettings:RedirectByAPI.cacheTimeout");
+        }
+
+        UriBuilder GetUri(HttpRequest request)
+        {
+            var uriBuilder = new UriBuilder
+            {
+                Scheme = request.Scheme,
+                Host = request.Host.Host,
+                Port = request.Host.Port.GetValueOrDefault(80),
+                Path = request.Path.ToString(),
+                Query = request.QueryString.ToString()
+            };
+            return uriBuilder;
         }
     }
 

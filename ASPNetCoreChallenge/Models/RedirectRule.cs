@@ -6,5 +6,9 @@
         public string targetUrl { get; set; }
         public int redirectType { get; set; }
         public bool useRelative { get; set; }
+
+        public bool permanent {get{
+            return redirectType == 301;
+        }}
     }
 }
