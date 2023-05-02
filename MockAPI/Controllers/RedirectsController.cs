@@ -11,10 +11,16 @@ namespace MockAPI.FakeAPI
     public class RedirectsController : ControllerBase
     {
         // GET: api/redirects
+        /// <summary>
+        /// Returns url redirects for consumption by challenge site
+        /// </summary>
+        /// <returns>IEnumerable of Redirect Objects</returns>
         [HttpGet]
         public ContentResult Get()
         {
+            //Read all text from the file
             var file = IO.File.ReadAllText("Assets/redirects.json");
+            //return the string as the content
             return Content(file, "application/json");
         }
     }

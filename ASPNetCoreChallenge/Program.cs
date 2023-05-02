@@ -1,13 +1,15 @@
 using ASPNetCoreChallenge.Modules;
 
 var builder = WebApplication.CreateBuilder(args);
+//Add console logger
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
 // Add services to the container.
 builder.Services.AddRazorPages();
 builder.Services.AddMemoryCache();
-builder.Services.AddSingleton<IRedirectByAPI, RedirectByAPI>();
+//App API Redirect Service
+builder.Services.AddRedirectAPIService();
 
 var app = builder.Build();
 
@@ -22,8 +24,10 @@ if (!app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 
+// Enable api routing and begin cache service.
 app.UseAPIRouting();
 
+//UseRouting is after UseAPIRouting, so Routing occurs second
 app.UseRouting();
 
 app.UseAuthorization();
